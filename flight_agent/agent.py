@@ -46,6 +46,7 @@ data_collector_agent = Agent(
     tools=[search_and_analyze_flights],
 )
 data_collector_agent.instruction += "\n- ★중요★: 모든 요약과 결과 전달은 영어 등 다른 언어를 쓰지 말고 반드시 한국어(Korean)로만 출력하세요."
+data_collector_agent.instruction += "\n- ★중요★: 도구를 호출할 때 절대로 'default_api.'와 같은 접두사를 붙이지 마세요. 반드시 'search_and_analyze_flights' 라고 정확한 함수명만 사용해야 합니다."
 
 
 # ============================================================
