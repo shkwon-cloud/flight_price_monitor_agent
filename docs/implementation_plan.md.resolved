@@ -1,0 +1,267 @@
+# 최적가 항공권 모니터링 AI 에이전트 (MVP) 구현 계획
+
+## 프로젝트 개요
+
+인천(ICN) → 다낭(DAD) 노선의 항공권 가격을 자동 모니터링하여, 역대 최저가 대비 +20% 이내 가격 발견 시 알림을 제공하는 AI 에이전트 시스템.
+
+- **프레임워크:** Google ADK + Ollama 로컬 LLM
+- **데이터 소스:** SerpApi (Google Flights Engine)
+- **아키텍처:** Main Agent (오케스트레이터) + Sub-Agent #1 (데이터 수집/분석)
+
+> [!IMPORTANT]
+> **Telegram Bot 알림은 본 계획에서 제외**합니다. 추후 별도 지시 시 구현 예정.
+> MVP에서는 **콘솔 출력 기반 알림**으로 대체합니다.
+
+---
+
+## User Review Required
+
+> [!WARNING]
+> **Ollama가 현재 시스템에 설치되어 있지 않습니다.** (`ollama` 명령어가 PATH에 없음)
+> 아래 두 가지 중 선택해주세요:
+> 1. Ollama를 직접 설치하신 후 진행 (https://ollama.com/download)
+> 2. 먼저 코드 구조와 Tool만 구현하고, Ollama 설치는 나중에 진행
+
+> [!IMPORTANT]
+> **SerpApi Key**가 필요합니다. 보유하고 계신 API Key를 알려주시거나, `.env` 파일에 직접 입력하시면 됩니다.
+
+---
+
+## 현재 환경 상태
+
+| 항목 | 상태 |
+|---|---|
+| Python (venv) | ✅ 3.11.9 |
+| 가상환경 | ✅ `.venv/` 활성화됨 |
+| Ollama | ❌ 미설치 |
+| 설치된 패키지 | pip, setuptools만 설치 |
+| SerpApi Key | ❓ 확인 필요 |
+
+---
+
+## Proposed Changes
+
+### 1단계: 환경 설정 (Foundation)
+
+#### [NEW] [requirements.txt](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/requirements.txt)
+```
+google-adk>=1.0.0
+openai>=1.14.0
+litellm>=1.30.0
+requests>=2.31.0
+python-dotenv>=1.0.1
+pydantic>=2.6.0
+```
+- `google-adk`: 에이전트 프레임워크
+- `litellm`: Ollama ↔ ADK 연동 브릿지 (모델명을 `ollama/llama3.1` 형태로 매핑)
+- `openai`: Ollama 로컬 API 통신
+- `requests`: SerpApi REST 호출
+- `python-dotenv`: 환경변수 관리
+- `pydantic`: 데이터 모델 검증
+
+#### [NEW] [.env](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/.env)
+```
+SERPAPI_API_KEY=your_serpapi_key_here
+OLLAMA_HOST=http://localhost:11434
+```
+
+#### [NEW] [.gitignore](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/.gitignore)
+```
+.venv/
+.env
+__pycache__/
+*.pyc
+```
+
+---
+
+### 2단계: 프로젝트 구조
+
+```
+flight_price_monitor_agent/
+├── .env                          # 환경변수 (SerpApi Key)
+├── .gitignore
+├── requirements.txt
+├── main.py                       # 엔트리포인트
+├── flight_agent/
+│   ├── __init__.py
+│   ├── agent.py                  # ADK Agent 정의 (Main + Sub-Agent)
+│   ├── tools/
+│   │   ├── __init__.py
+│   │   ├── flight_search.py      # SerpApi 호출 (Two-Phase 알고리즘)
+│   │   └── price_analyzer.py     # 최저가/타겟가격 산출
+│   └── config.py                 # 설정값 (노선, 임계치 등)
+└── docs/
+    ├── PRD.md
+    └── TRD.md
+```
+
+---
+
+### 3단계: 핵심 Tool 구현
+
+#### [NEW] [config.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/flight_agent/config.py)
+
+프로젝트 전역 설정값 관리:
+- 노선 정보: `DEPARTURE_ID = "ICN"`, `ARRIVAL_ID = "DAD"`
+- 탐색 범위: `SEARCH_DAYS = 30` (Phase 1 편도 탐색 기간)
+- Top N: `TOP_N_CHEAPEST = 3` (Phase 1에서 추출할 저렴한 출발일 수)
+- 체류 기간: `STAY_DURATIONS = [4, 6, 8, 10, 12, 14]` (짝수일만)
+- 알림 임계치: `PRICE_THRESHOLD_RATIO = 1.2` (최저가 × 1.2)
+- API 지연: `API_DELAY_MIN = 0.5`, `API_DELAY_MAX = 1.0` (Rate Limit 방어)
+- 통화: `CURRENCY = "KRW"`, `GL = "kr"`, `HL = "ko"`
+
+#### [NEW] [flight_search.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/flight_agent/tools/flight_search.py)
+
+PRD의 **FR-1 (전략 B 알고리즘)** 구현:
+
+**Phase 1 - 편도 선행 탐색:**
+```python
+def search_oneway_flights(departure_id, arrival_id, start_date, days=30):
+    """
+    오늘부터 30일간 편도 항공권 가격 조회.
+    SerpApi params: engine=google_flights, type=2 (One way),
+    departure_id=ICN, arrival_id=DAD, outbound_date=YYYY-MM-DD,
+    currency=KRW, gl=kr, hl=ko
+    
+    Returns: 날짜별 최저가 리스트 → Top 3 출발일 추출
+    """
+```
+
+**Phase 2 - 왕복 결합 탐색:**
+```python
+def search_roundtrip_flights(departure_id, arrival_id, outbound_date, stay_days):
+    """
+    특정 출발일에 대해 체류 기간별 왕복 항공권 조회.
+    SerpApi params: engine=google_flights, type=1 (Round trip),
+    departure_id=ICN, arrival_id=DAD,
+    outbound_date=YYYY-MM-DD, return_date=YYYY-MM-DD,
+    currency=KRW, gl=kr, hl=ko
+    
+    체류 기간: 4, 6, 8, 10, 12, 14일 (짝수일만, 6회씩 호출)
+    Top 3 × 6 = 최대 18회 API 호출
+    """
+```
+
+**API Rate Limit 방어:**
+- 각 API 호출 사이에 `time.sleep(random.uniform(0.5, 1.0))` 적용
+- 429 에러 시 최대 3회 재시도 + 백오프
+
+**에러 처리:**
+- 특정 날짜에 항공편이 없을 경우: `{"status": "no_flights", "date": "..."}`
+- API 타임아웃: `{"status": "error", "message": "..."}`
+
+#### [NEW] [price_analyzer.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/flight_agent/tools/price_analyzer.py)
+
+PRD의 **FR-2 (역대 최저가 및 타겟 가격 산출)** 구현:
+
+```python
+def analyze_prices(search_results):
+    """
+    1. price_insights에서 역대 최저가(lowest_price) 추출
+    2. 타겟 가격 = lowest_price × 1.2 산출
+    3. 현재 검색 결과 중 타겟 가격 이하인 항공편 필터링
+    4. JSON 형태로 Main Agent에게 반환
+    
+    Returns: {
+        "status": "success",
+        "historical_lowest_price": 350000,
+        "target_price": 420000,  # 350000 × 1.2
+        "deals_found": [...],    # 타겟 이하 항공편 목록
+        "best_deal": {...}       # 가장 저렴한 항공편
+    }
+    """
+```
+
+---
+
+### 4단계: ADK 에이전트 구현
+
+#### [NEW] [agent.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/flight_agent/agent.py)
+
+PRD의 **Section 3 (Sub-agent 위임 패턴)** 구현:
+
+**Sub-Agent #1 (데이터 수집/분석):**
+```python
+data_collector_agent = LlmAgent(
+    name="flight_data_collector",
+    model="ollama/llama3.1",      # LiteLLM을 통한 Ollama 연동
+    instruction="""당신은 항공권 데이터 수집/분석 전문 에이전트입니다.
+    - search_flights 도구를 사용해 ICN→DAD 항공편을 검색하세요.
+    - analyze_prices 도구를 사용해 최저가를 분석하세요.
+    - 결과를 반드시 JSON 형태로 반환하세요.""",
+    tools=[search_flights_tool, analyze_prices_tool],
+)
+```
+
+**Main Agent (오케스트레이터):**
+```python
+main_agent = LlmAgent(
+    name="flight_monitor_main",
+    model="ollama/llama3.1",
+    instruction="""당신은 항공권 모니터링 오케스트레이터입니다.
+    - flight_data_collector에게 데이터 수집을 위임하세요.
+    - 반환된 JSON에서 타겟 가격(최저가×1.2) 이하 항공편이 있는지 판단하세요.
+    - 좋은 거래가 발견되면 상세 알림 메시지를 생성하세요.""",
+    sub_agents=[data_collector_agent],
+)
+```
+
+#### [NEW] [main.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/main.py)
+
+```python
+"""엔트리포인트 - 에이전트 실행"""
+- dotenv 로드
+- Ollama 서버 연결 확인
+- main_agent 실행
+- 결과를 콘솔에 출력 (MVP: Telegram 대체)
+```
+
+---
+
+### 5단계: 로컬 LLM 연동 (FR-3)
+
+Google ADK에서 Ollama를 사용하기 위해 **LiteLLM** 브릿지를 활용:
+- 모델명: `ollama/llama3.1` (LiteLLM이 자동으로 `http://localhost:11434`로 라우팅)
+- ADK의 `LlmAgent`에서 `model` 파라미터로 직접 지정
+- 컨텍스트 윈도우를 최소화하여 RAM 8GB 환경에서 안정적 구동
+
+---
+
+## SerpApi 핵심 파라미터 정리
+
+| 파라미터 | Phase 1 (편도) | Phase 2 (왕복) |
+|---|---|---|
+| `engine` | `google_flights` | `google_flights` |
+| `type` | `2` (One way) | `1` (Round trip) |
+| `departure_id` | `ICN` | `ICN` |
+| `arrival_id` | `DAD` | `DAD` |
+| `outbound_date` | 30일간 순회 | Top 3 날짜 |
+| `return_date` | - | 출발일 + 4/6/8/10/12/14일 |
+| `currency` | `KRW` | `KRW` |
+| `gl` | `kr` | `kr` |
+| `hl` | `ko` | `ko` |
+| `adults` | `1` | `1` |
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> 1. **Ollama 설치 여부:** Ollama를 지금 설치하고 진행할까요, 아니면 코드 구조만 먼저 만들까요?
+> 2. **SerpApi Key:** API Key를 보유하고 계신가요? (무료 플랜도 월 100회 검색 가능)
+> 3. **LLM 모델 우선순위:** `llama3.1` (8B) vs `phi3:mini` (3.8B) 중 어떤 모델로 먼저 테스트할까요?
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. `flight_search.py`: SerpApi 단건 호출 테스트 (편도 1회 → 응답 JSON 확인)
+2. `price_analyzer.py`: 모의 데이터로 최저가/타겟가 산출 로직 검증
+3. `agent.py`: Main Agent → Sub-Agent 위임 플로우 테스트
+
+### Manual Verification
+1. Ollama 서버 구동 상태 확인 (`curl http://localhost:11434/api/tags`)
+2. 전체 파이프라인 실행 → 콘솔 출력으로 알림 메시지 확인
+3. API 호출 횟수 카운트 (Phase 1: ~30회, Phase 2: ~18회 = 총 ~48회 이내)

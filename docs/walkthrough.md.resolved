@@ -1,0 +1,92 @@
+# 최적가 항공권 모니터링 AI 에이전트 MVP - 구현 Walkthrough
+
+## 구현 완료 사항
+
+### 1. 환경 설정 ✅
+
+| 항목 | 상태 | 상세 |
+|---|---|---|
+| Python (venv) | ✅ | 3.11.9 (`d:\...\flight_price_monitor_agent\.venv\`) |
+| Ollama | ✅ | v0.20.7 (winget 설치) |
+| LLM 모델 | ✅ | llama3.1:latest (8B, Q4_K_M, 4.9GB) |
+| google-adk | ✅ | v1.30.0 |
+| litellm | ✅ | LiteLLM → Ollama 브릿지 |
+
+---
+
+### 2. 프로젝트 구조 ✅
+
+```
+flight_price_monitor_agent/
+├── .env                              # 환경변수 (SerpApi Key)
+├── .gitignore
+├── requirements.txt                  # 6개 핵심 패키지
+├── main.py                           # 엔트리포인트
+├── flight_agent/
+│   ├── __init__.py
+│   ├── config.py                     # 전역 설정 (노선, 임계치, API 등)
+│   ├── agent.py                      # ADK Agent 정의 (Main + Sub)
+│   └── tools/
+│       ├── __init__.py
+│       ├── flight_search.py          # SerpApi Two-Phase 알고리즘
+│       └── price_analyzer.py         # 가격 분석 및 알림 포맷
+└── docs/
+    ├── PRD.md                        # 제품 요구사항 정의서
+    └── TRD.md                        # 기술 요구사항 정의서
+```
+
+---
+
+### 3. 핵심 구현 내용
+
+#### [flight_search.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/flight_agent/tools/flight_search.py) — Two-Phase 알고리즘 (FR-1, FR-2)
+
+- **Phase 1**: 향후 30일간 편도 최저가 검색 → Top 3 출발일 추출
+- **Phase 2**: Top 3 × 6개 체류기간(4,6,8,10,12,14일) = 최대 18회 왕복 검색
+- **가격 분석**: `price_insights`에서 역대 최저가 추출 → × 1.2로 타겟 가격 산출
+- **Rate Limit 방어**: 0.5~1.0초 랜덤 지연 + 429 에러 시 백오프 재시도
+- **예외 처리**: 항공편 없음/API 타임아웃 시 스크립트 중단 없이 계속 진행
+
+#### [agent.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/flight_agent/agent.py) — ADK Agent 아키텍처 (PRD Section 3)
+
+```
+Main Agent (오케스트레이터)
+  └── Sub-Agent #1 (flight_data_collector)
+        └── Tool: search_and_analyze_flights()
+```
+
+- **LiteLLM 브릿지**: `ollama/llama3.1` 모델을 ADK에서 직접 사용
+- **Handoff 패턴**: Main Agent가 Sub-Agent에 위임, 결과를 분석 후 알림 판단
+- **환각 방지**: 모든 계산 로직은 Python Tool에 하드코딩 (LLM은 실행만 담당)
+
+#### [main.py](file:///d:/Intel_AI_App_Creator_Hands_on/flight_price_monitor_agent/main.py) — 엔트리포인트
+
+- **환경 점검**: Ollama 서버 연결 + SerpApi Key 유효성 확인
+- **비동기 실행**: ADK Runner를 통한 async 에이전트 실행
+- **콘솔 알림**: MVP 단계에서 Telegram 대신 콘솔 출력 사용
+
+---
+
+### 4. 검증 결과 ✅
+
+- ✅ 전체 모듈 import 테스트 통과 (config → flight_search → price_analyzer → agent)
+- ✅ Ollama 서버 연결 확인 (llama3.1:latest, 8B Q4_K_M)
+- ⏳ SerpApi 전체 파이프라인 테스트: **사용자의 API Key 입력 대기**
+
+---
+
+## 다음 단계 (사용자 액션 필요)
+
+1. `.env` 파일에 **SerpApi API Key** 입력:
+
+   ```
+   SERPAPI_API_KEY=실제_키_입력
+   ```
+
+2. 에이전트 실행:
+
+   ```bash
+   .\.venv\Scripts\python.exe main.py
+   ```
+
+3. 추후 지시 시: Telegram Bot 알림 연동, 자동 스케줄링 구현
