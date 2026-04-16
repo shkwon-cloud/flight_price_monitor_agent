@@ -17,9 +17,9 @@ ARRIVAL_ID = "DAD"     # 다낭국제공항 (Da Nang International Airport)
 # ============================================================
 # 탐색 파라미터 (Search Parameters)
 # ============================================================
-SEARCH_DAYS = 3                           # Phase 1: 편도 탐색 기간 (일) ※ 간편시험용: 30→3
-TOP_N_CHEAPEST = 3                        # Phase 1: 추출할 최저가 출발일 수
-STAY_DURATIONS = [2]                      # Phase 2: 체류 기간 ※ 간편시험용: [4,6,8,10,12,14]→[3]
+SEARCH_DAYS = 3                           # 탐색 기간
+TOP_N_CHEAPEST = 3                        # 추출할 최저가 출발일 수
+STAY_DURATIONS = [2]                      # 체류 기간 단위
 
 # ============================================================
 # 가격 임계치 (Price Threshold)
@@ -27,14 +27,19 @@ STAY_DURATIONS = [2]                      # Phase 2: 체류 기간 ※ 간편시
 PRICE_THRESHOLD_RATIO = 1.2  # 알림 기준: 역대 최저가 × 1.2
 
 # ============================================================
-# SerpApi 설정 (API Configuration)
+# Google Cloud Vertex AI 설정 (API Configuration)
 # ============================================================
-SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")
-SERPAPI_BASE_URL = "https://serpapi.com/search"
-API_DELAY_MIN = 0.5    # API 호출 간 최소 대기 시간 (초)
-API_DELAY_MAX = 1.0    # API 호출 간 최대 대기 시간 (초)
-API_MAX_RETRIES = 3    # 429 에러 시 최대 재시도 횟수
-API_TIMEOUT = 30       # API 응답 타임아웃 (초)
+PROJECT_ID = os.getenv("PROJECT_ID", "")
+LOCATION = os.getenv("LOCATION", "us-central1")
+
+os.environ["VERTEX_PROJECT"] = PROJECT_ID
+os.environ["VERTEX_LOCATION"] = "us-central1"
+
+#VERTEX_MODEL = "gemini-2.0-flash-lite-preview-02-05"
+#ADK_LLM_MODEL = "vertex_ai/gemini-2.0-flash-lite-preview-02-05"
+# 신규 프로젝트에서 제한 없이 접근 가능한 빠르고 안정적인 모델
+VERTEX_MODEL = "gemini-2.5-flash-lite"
+ADK_LLM_MODEL = "vertex_ai/gemini-2.5-flash-lite"
 
 # ============================================================
 # 현지화 설정 (Localization)
@@ -42,9 +47,3 @@ API_TIMEOUT = 30       # API 응답 타임아웃 (초)
 CURRENCY = "KRW"   # 통화: 한국 원
 GL = "kr"          # 국가: 한국
 HL = "ko"          # 언어: 한국어
-
-# ============================================================
-# LLM 설정 (Local LLM Configuration)
-# ============================================================
-OLLAMA_MODEL = "ollama/llama3.1"
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
